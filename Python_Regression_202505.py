@@ -487,7 +487,7 @@ except Exception as e:
 
 # Goldfeld-Quandt检验
 try:
-    gq_pvalue = het_goldfeldquandt(_work_model_residuals, _work_X)[1]
+    gq_pvalue = het_goldfeldquandt(_work_Y, _work_X)[1]
     diagnostic_results.append(['Goldfeld-Quandt', gq_pvalue, '同方差', gq_pvalue > 0.05])
     print(f'Goldfeld-Quandt p值：{gq_pvalue:.4f}')
 except Exception as e:
