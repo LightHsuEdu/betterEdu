@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import math
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,9 +7,15 @@ import statsmodels.api as sm
 import statsmodels.stats.api as sms
 import statsmodels.robust.norms as robust_norms
 from statsmodels.iolib.summary2 import summary_col
-from statsmodels.stats.diagnostic import linear_rainbow, het_breuschpagan, het_goldfeldquandt
+from statsmodels.stats.diagnostic import linear_harvey_collier, linear_reset, linear_rainbow, het_breuschpagan, het_goldfeldquandt, het_white
 from statsmodels.stats.stattools import durbin_watson
 from statsmodels.stats.outliers_influence import variance_inflation_factor
+from sklearn.model_selection import KFold
+from sklearn.linear_model import RidgeCV, LassoCV, ElasticNetCV
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.linear_model import Ridge, Lasso, ElasticNet
+from sklearn.metrics import mean_squared_error
+
 import scipy.stats as stats
 from scipy.stats import shapiro, jarque_bera, skew, kurtosis
 import sys
@@ -23,7 +28,7 @@ import warnings
 warnings.filterwarnings("ignore")
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-print('''
+'''
 # 开发测试环境
 # Python 3.12.2
 # Pandas 2.2.2
@@ -32,7 +37,8 @@ print('''
 # seaborn 0.13.2
 # scipy 1.13.0
 # statsmodels-0.14.1
-\n''')
+# scikit-learn 1.6.1
+'''
 
 # 选择数据文件
 single_xlsx_fileNames = filedialog.askopenfilename(initialdir="D:/", filetypes=[("xlsx 文件", "*.xlsx")])
@@ -203,7 +209,7 @@ output_DF_XLS_List.append([dataFrm, '数据'])
 
 # 变量关系对图
 sns.pairplot(dataFrm, y_vars=model_var_Y, x_vars=[col for col in model_var_X if col in dataFrm.columns], aspect=1)
-plt.subplots_adjust(hspace=0.2, wspace=0.2)
+plt.subplots_adjust(hspace=0.2, wspace=0.2, top=0.85)
 plt.title('变量关系图')
 plt.show()
 plt.close()
@@ -246,7 +252,7 @@ _numVar = len(model_var_X)
 _numObs = int(_test_Model.nobs)
 _cutoff_leverage = (2 * _numVar + 2) / _numObs
 _cutoff_cooks = 4 / _numObs
-_cutoff_dffits = 2 * math.sqrt(_numVar / _numObs)
+_cutoff_dffits = 2 * np.sqrt(_numVar / _numObs)
 
 # 识别异常值
 outliers_resid = _full_outliers[abs(_full_outliers['标准化残差']) > 2]
@@ -307,8 +313,9 @@ else:
 output_DF_XLS_List.append([cleaned_dataFrm, '数据'])
 
 # 清理后数据对图
-sns.pairplot(cleaned_dataFrm, y_vars=model_var_Y, x_vars=[col for col in model_var_X if col in cleaned_dataFrm.columns], aspect=1, kind="reg")
-plt.subplots_adjust(hspace=0.2, wspace=0.2)
+sns.pairplot(cleaned_dataFrm, y_vars=model_var_Y, x_vars=model_var_X, aspect=1, kind="reg")
+plt.subplots_adjust(hspace=0.2, wspace=0.2, top=0.85)
+plt.suptitle('数据散点与回归线图')
 plt.show()
 plt.close()
 
@@ -349,11 +356,21 @@ try:
     __skip = len(_work_Model.params)
     _l_test_Harvey_Collier = sms.recursive_olsresiduals(_work_Model, skip=__skip, alpha=0.95, order_by=None)
     hc_pvalue = stats.ttest_1samp(_l_test_Harvey_Collier[3][__skip:], 0)[1]
+    if len(_l_test_Harvey_Collier[3]) < 1 or np.any(np.isnan(_l_test_Harvey_Collier[3])):
+        raise ValueError("递归残差无效（空或包含 NaN）")
     diagnostic_results.append(['Harvey-Collier', hc_pvalue, '线性', hc_pvalue > 0.05])
     print(f'Harvey-Collier p值：{hc_pvalue:.4f}')
 except Exception as e:
     print(f'Harvey-Collier检验失败：{e}')
     diagnostic_results.append(['Harvey-Collier', None, '线性', None])
+    
+try:
+    statsm_hc_stat, statsm_hc_pvalue = linear_harvey_collier(_work_Model)
+    diagnostic_results.append(['statsm_Harvey-Collier', hc_pvalue, '线性', statsm_hc_pvalue > 0.05 if hc_pvalue is not None else False])
+    print(f'statsm_Harvey-Collier p值：{statsm_hc_pvalue:.4f}' if statsm_hc_pvalue is not None else 'N/A')
+except Exception as e:
+    print(f'statsm_Harvey-Collier检验失败：{e}')
+    diagnostic_results.append(['statsm_Harvey-Collier', None, '线性', None])
 
 # Rainbow检验
 try:
@@ -366,7 +383,7 @@ except Exception as e:
 
 # Ramsey RESET检验
 try:
-    reset_test = sms.linear_reset(_work_Model, power=2, test_type='fitted')
+    reset_test = linear_reset(_work_Model, power=4, test_type='fitted')
     reset_pvalue = reset_test.pvalue
     diagnostic_results.append(['Ramsey RESET', reset_pvalue, '线性', reset_pvalue > 0.05])
     print(f'Ramsey RESET p值：{reset_pvalue:.4f}')
@@ -387,7 +404,7 @@ plt.show()
 plt.close()
 
 try:
-    fig = sm.qqplot(_work_model_residuals, dist=stats.t, fit=True, line='45')
+    fig = sm.qqplot(_work_model_residuals, dist=stats.norm, fit=True, line='45')
     plt.title('Q-Q图')
     plt.show()
     plt.close()
@@ -398,7 +415,7 @@ except Exception as e:
 resid_skew = skew(_work_model_residuals)
 resid_kurt = kurtosis(_work_model_residuals, fisher=True)
 print(f'偏度：{resid_skew:.4f}（接近0表示对称）')
-print(f'峰度：{resid_kurt:.4f}（接近0表示正态尾部）')
+print(f'峰度：{resid_kurt:.4f}（接近0表示与正态分布相似）')
 
 # Shapiro-Wilk检验
 try:
@@ -451,9 +468,14 @@ print('\n' + '='*20 + ' 多重共线性检验 ' + '='*20 + '\n')
 
 # VIF计算
 _vif_X = cleaned_dataFrm[model_var_X]
+_vif_X = sm.add_constant(_vif_X)
 _vif_dataFm = pd.DataFrame()
-_vif_dataFm["变量"] = _vif_X.columns
-_vif_dataFm["VIF"] = [variance_inflation_factor(_vif_X.values, i) for i in range(len(_vif_X.columns))]
+_vif_dataFm["变量"] = model_var_X
+try:
+    _vif_dataFm["VIF"] = [variance_inflation_factor(_vif_X.values, i) for i in range(1, _vif_X.shape[1])]
+except Exception as e:
+    print(f'VIF 计算失败：{e}')
+
 diagnostic_results.append(['最大VIF', _vif_dataFm["VIF"].max(), '多重共线性', _vif_dataFm["VIF"].max() < 10])
 print(_vif_dataFm)
 output_DF_XLS_List.append([_vif_dataFm, 'VIF'])
@@ -487,13 +509,22 @@ except Exception as e:
 
 # Goldfeld-Quandt检验
 try:
-    gq_pvalue = het_goldfeldquandt(_work_Y, _work_X)[1]
+    gq_pvalue = het_goldfeldquandt(_work_model_residuals, _work_X)[1]
     diagnostic_results.append(['Goldfeld-Quandt', gq_pvalue, '同方差', gq_pvalue > 0.05])
     print(f'Goldfeld-Quandt p值：{gq_pvalue:.4f}')
 except Exception as e:
     print(f'Goldfeld-Quandt检验失败：{e}')
     diagnostic_results.append(['Goldfeld-Quandt', None, '同方差', None])
 
+# White检验
+try:
+    white_pvalue = het_white(_work_model_residuals, _work_X)[1]
+    diagnostic_results.append(['White', white_pvalue, '同方差', white_pvalue > 0.05])
+    print(f'White 检验 p值：{white_pvalue:.4f}')
+except Exception as e:
+    print(f'White 检验失败：{e}')
+    diagnostic_results.append(['White', None, '同方差', None])
+    
 print('结论：如果 p > 0.05 且残差图无明显模式，则支持同方差假设。\n')
 
 # 诊断结果总结
@@ -532,113 +563,291 @@ for over_vif_idx in range(len(_over_vif_list)):
         print(f'VIF调整后的OLS模型 ({_vifMdl_name}) 失败：{e}')
 
 # 正则化回归（Ridge、Lasso、Elastic Net）
-alphas = 10**np.linspace(10, -2, 100) * 0.01
+# 转换系数回原始尺度
+def inverseNormalize(norm_params, X_original, Y_original, var_names):
+    min_Y = Y_original.min()
+    range_Y = Y_original.max() - min_Y
+    intercept_norm = norm_params[0]
+    original_params = np.zeros(len(norm_params))
+    
+    # 自变量系数转换
+    for i, var in enumerate(var_names):
+        min_X = X_original[var].min()
+        range_X = X_original[var].max() - min_X
+        if range_X == 0:
+            original_params[i + 1] = norm_params[i + 1] * range_Y  # 统一[i + 1]
+        else:
+            original_params[i + 1] = norm_params[i + 1] * (range_Y / range_X)
+    
+    # 截距转换
+    sum_adjust = sum(original_params[i + 1] * X_original[var_names[i]].min() for i in range(len(var_names)))
+    original_params[0] = intercept_norm * range_Y + min_Y - sum_adjust
+    
+    # 返回
+    index = ['const'] + var_names
+    return pd.Series(original_params, index=index)
 
-def min_max_normalize(data):
-    return (data - data.min()) / (data.max() - data.min())
+# 简单 Normalize
+def simpleMinMaxNormalize(data):
+    data_min = data.min()
+    data_max = data.max()
+    if data_max - data_min == 0:
+        return data * 0
+    return (data - data_min) / (data_max - data_min)
 
-_work_X_normalized = _work_X.copy()
+_work_X_clean = _work_X[model_var_X].dropna()
+_work_Y_clean = _work_Y.dropna()
+_work_X_normalized = _work_X_clean.copy()
 for col in model_var_X:
-    if col in _work_X_normalized.columns:
-        _work_X_normalized[col] = min_max_normalize(_work_X[col])
-_work_Y_normalized = min_max_normalize(_work_Y)
+    _work_X_normalized[col] = simpleMinMaxNormalize(_work_X_normalized[col])
+_work_X_normalized = sm.add_constant(_work_X_normalized)
+_work_Y_normalized = simpleMinMaxNormalize(_work_Y_clean)
 
-def k_fold_cv_regularized(X, y, alphas, L1_wt, k=5):
+
+# 正则化回归（Ridge、Lasso、Elastic Net） - statsmodels 版本
+alphas = 10 ** np.linspace(10, -2, 100) * 0.01
+
+# 手动 K-fold CV alpha 选择
+def kFoldRegularized(X, y, alphas, L1_wt, k=5, random_state=42):
     n = len(y)
-    fold_size = n // k
+    if n < k + 1:
+        print("警告: 样本量太小，返回最小 alpha")
+        return min(alphas)
+    
+    kf = KFold(n_splits=k, shuffle=True, random_state=random_state)
     mse_scores = []
     for alpha in alphas:
         fold_mse = []
-        indices = np.random.permutation(n)
-        X_shuffled = X.iloc[indices]
-        y_shuffled = y.iloc[indices]
-        for i in range(k):
-            test_idx = range(i * fold_size, (i + 1) * fold_size)
-            train_idx = list(set(range(n)) - set(test_idx))
-            X_train = X_shuffled.iloc[train_idx]
-            y_train = y_shuffled.iloc[train_idx]
-            X_test = X_shuffled.iloc[test_idx]
-            y_test = y_shuffled.iloc[test_idx]
+        for train_idx, test_idx in kf.split(X):
+            X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+            y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
             try:
                 model = sm.OLS(y_train, X_train).fit_regularized(alpha=alpha, L1_wt=L1_wt)
                 y_pred = np.dot(X_test, model.params)
                 mse = np.mean((y_test - y_pred) ** 2)
+                if np.isnan(mse):
+                    mse = np.inf
                 fold_mse.append(mse)
-            except:
+            except Exception as e:
+                print(f'CV fold错误: {e}')
                 fold_mse.append(np.inf)
         mse_scores.append(np.mean(fold_mse))
     best_alpha_idx = np.argmin(mse_scores)
     return alphas[best_alpha_idx]
 
 try:
-    ridge_alpha = k_fold_cv_regularized(_work_X_normalized, _work_Y_normalized, alphas, L1_wt=0)
-    lasso_alpha = k_fold_cv_regularized(_work_X_normalized, _work_Y_normalized, alphas, L1_wt=1)
-    enet_alpha = k_fold_cv_regularized(_work_X_normalized, _work_Y_normalized, alphas, L1_wt=0.5)
+    ridge_alpha = kFoldRegularized(_work_X_normalized, _work_Y_normalized, alphas, L1_wt=0)
+    lasso_alpha = kFoldRegularized(_work_X_normalized, _work_Y_normalized, alphas, L1_wt=1)
+    enet_alpha = kFoldRegularized(_work_X_normalized, _work_Y_normalized, alphas, L1_wt=0.5)
 
-    _sm_pre_mdl = sm.OLS(_work_Y_normalized, _work_X_normalized, missing='drop')
-    _sm_pre_mdl_results = _sm_pre_mdl.fit()
+    # 拟合最终模型
+    _sm_mdl = sm.OLS(_work_Y_normalized, _work_X_normalized)
+    smfit_ridge = _sm_mdl.fit_regularized(alpha=ridge_alpha, L1_wt=0)
+    smfit_lasso = _sm_mdl.fit_regularized(alpha=lasso_alpha, L1_wt=1)
+    smfit_elsnet = _sm_mdl.fit_regularized(alpha=enet_alpha, L1_wt=0.5)
 
-    param_names = _work_X_normalized.columns.tolist()
+    # 添加到 ALL_Model_List
+    ALL_Model_List.append([smfit_ridge, 'Ridge'])
+    ALL_Model_List.append([smfit_lasso, 'Lasso'])
+    ALL_Model_List.append([smfit_elsnet, 'ElasticNet'])
 
-    smfit_ridge = _sm_pre_mdl.fit_regularized(alpha=ridge_alpha, L1_wt=0, start_params=_sm_pre_mdl_results.params)
-    ridge_params = pd.Series(smfit_ridge.params, index=param_names)
-    ridge_final = sm.regression.linear_model.OLSResults(_sm_pre_mdl, ridge_params, _sm_pre_mdl.normalized_cov_params)
+    # 自定义 summary
+    def print_regularized_summary(model, name, alpha, X_orig, Y_orig, var_names):
+        norm_params = model.params
+        norm_series = pd.Series(norm_params, index=['const'] + var_names)
+        original_params = inverseNormalize(norm_params, X_orig, Y_orig, var_names)
+        print(f'\n-->> {name} (Best alpha={alpha:.4f})') 
+        print('规范化系数：')
+        print(norm_series)
+        print('\n原始尺度系数：')
+        print(original_params)
+    
+    print_regularized_summary(smfit_ridge, 'Ridge', ridge_alpha, _work_X_clean, _work_Y_clean, model_var_X)
+    print_regularized_summary(smfit_lasso, 'Lasso', lasso_alpha, _work_X_clean, _work_Y_clean, model_var_X)
+    print_regularized_summary(smfit_elsnet, 'ElasticNet', enet_alpha, _work_X_clean, _work_Y_clean, model_var_X)
 
-    smfit_lasso = _sm_pre_mdl.fit_regularized(alpha=lasso_alpha, L1_wt=1, start_params=_sm_pre_mdl_results.params)
-    lasso_params = pd.Series(smfit_lasso.params, index=param_names)
-    lasso_final = sm.regression.linear_model.OLSResults(_sm_pre_mdl, lasso_params, _sm_pre_mdl.normalized_cov_params)
-
-    smfit_elsnet = _sm_pre_mdl.fit_regularized(alpha=enet_alpha, L1_wt=0.5, start_params=_sm_pre_mdl_results.params)
-    elsnet_params = pd.Series(smfit_elsnet.params, index=param_names)
-    elsnet_final = sm.regression.linear_model.OLSResults(_sm_pre_mdl, elsnet_params, _sm_pre_mdl.normalized_cov_params)
-
-    ALL_Model_List.append([ridge_final, 'Ridge'])
-    ALL_Model_List.append([lasso_final, 'Lasso'])
-    ALL_Model_List.append([elsnet_final, 'ElasticNet'])
 except Exception as e:
-    print(f'正则化回归失败：{e}')
+    print(f'statsmodels 正则化回归失败：{e}')
 
-# 稳健回归
-print('\n' + '='*20 + ' 稳健回归 ' + '='*20 + '\n')
+# 正则化回归（Ridge、Lasso、Elastic Net） - sklearn 版本
+try:
+    # Normalize (用 simpleMinMaxNormalize 统一)
+    _work_X_normalized_sk = _work_X_clean.copy()
+    for col in model_var_X:
+        _work_X_normalized_sk[col] = simpleMinMaxNormalize(_work_X_normalized_sk[col])
+    _work_Y_normalized_sk = simpleMinMaxNormalize(_work_Y_clean)
+
+    # 手动 CV ，与 statsmodels 统一
+    def kFoldSklearn(ModelClass, X, y, alphas, l1_ratio=None, k=5, random_state=42):
+        kf = KFold(n_splits=k, shuffle=True, random_state=random_state)
+        mse_scores = []
+        for alpha in alphas:
+            fold_mse = []
+            for train_idx, test_idx in kf.split(X):
+                X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+                y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+                if l1_ratio is not None:
+                    model = ModelClass(alpha=alpha, l1_ratio=l1_ratio)
+                else:
+                    model = ModelClass(alpha=alpha)
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+                mse = mean_squared_error(y_test, y_pred)
+                fold_mse.append(mse)
+            mse_scores.append(np.mean(fold_mse))
+        best_alpha_idx = np.argmin(mse_scores)
+        return alphas[best_alpha_idx]
+
+    ridge_alpha_sk = kFoldSklearn(Ridge, _work_X_normalized_sk, _work_Y_normalized_sk, alphas)
+    lasso_alpha_sk = kFoldSklearn(Lasso, _work_X_normalized_sk, _work_Y_normalized_sk, alphas)
+    enet_alpha_sk = kFoldSklearn(ElasticNet, _work_X_normalized_sk, _work_Y_normalized_sk, alphas, l1_ratio=0.5)
+
+    # 拟合最终模型
+    ridge_cv_sk = Ridge(alpha=ridge_alpha_sk).fit(_work_X_normalized_sk, _work_Y_normalized_sk)
+    lasso_cv_sk = Lasso(alpha=lasso_alpha_sk).fit(_work_X_normalized_sk, _work_Y_normalized_sk)
+    enet_cv_sk = ElasticNet(alpha=enet_alpha_sk, l1_ratio=0.5).fit(_work_X_normalized_sk, _work_Y_normalized_sk)
+
+    # 添加到 ALL_Model_List
+    ALL_Model_List.append([ridge_cv_sk, 'sklearn_Ridge'])
+    ALL_Model_List.append([lasso_cv_sk, 'sklearn_Lasso'])
+    ALL_Model_List.append([enet_cv_sk, 'sklearn_ElasticNet'])
+
+    # 自定义 summary 
+    def print_sklearn_summary(model, name, X_orig, Y_orig, var_names, X_norm, y_norm):
+        norm_params = np.hstack(([model.intercept_], model.coef_))
+        norm_series = pd.Series(norm_params, index=['const'] + var_names)
+        original_params = inverseNormalize(norm_params, X_orig, Y_orig, var_names)
+        print(f'\n-->> {name} (Best alpha={model.alpha:.4f})')
+        print('规范化系数：')
+        print(norm_series)
+        print('\n原始尺度系数：')
+        print(original_params)
+        
+        # 计算 R-squared
+        y_pred = model.predict(X_norm)
+        r2 = 1 - np.sum((y_norm - y_pred)**2) / np.sum((y_norm - np.mean(y_norm))**2)
+        print(f' {name} R-squared (规范化数据): {r2:.4f}')
+
+    print_sklearn_summary(ridge_cv_sk, 'sklearn_Ridge', _work_X_clean, _work_Y_clean, model_var_X, _work_X_normalized_sk, _work_Y_normalized_sk)
+    print_sklearn_summary(lasso_cv_sk, 'sklearn_Lasso', _work_X_clean, _work_Y_clean, model_var_X, _work_X_normalized_sk, _work_Y_normalized_sk)
+    print_sklearn_summary(enet_cv_sk, 'sklearn_ElasticNet', _work_X_clean, _work_Y_clean, model_var_X, _work_X_normalized_sk, _work_Y_normalized_sk)
+
+except Exception as e:
+    print(f'sklearn 正则化回归失败：{e}')
+
+# 正则化回归（Ridge、Lasso、Elastic Net） - sklearn 默认版本
+try:
+    _work_X_normalized_def = _work_X_clean.copy()
+    for col in model_var_X:
+        _work_X_normalized_def[col] = simpleMinMaxNormalize(_work_X_normalized_def[col])
+    _work_Y_normalized_def = simpleMinMaxNormalize(_work_Y_clean)
+
+    # 使用sklearn内置CV模型（自动选择Best_alpha）
+    ridge_cv_def = RidgeCV(alphas=alphas, fit_intercept=True, cv=5).fit(_work_X_normalized_def, _work_Y_normalized_def)
+    lasso_cv_def = LassoCV(alphas=alphas, fit_intercept=True, cv=5, random_state=42).fit(_work_X_normalized_def, _work_Y_normalized_def)
+    enet_cv_def = ElasticNetCV(alphas=alphas, l1_ratio=0.5, fit_intercept=True, cv=5, random_state=42).fit(_work_X_normalized_def, _work_Y_normalized_def)
+
+    # 添加到 ALL_Model_List
+    ALL_Model_List.append([ridge_cv_def, 'sklearn_Default_Ridge'])
+    ALL_Model_List.append([lasso_cv_def, 'sklearn_Default_Lasso'])
+    ALL_Model_List.append([enet_cv_def, 'sklearn_Default_ElasticNet'])
+
+    # 自定义 summary
+    def print_sklearn_default_summary(model, name, X_orig, Y_orig, var_names, X_norm, y_norm):
+        norm_params = np.hstack(([model.intercept_], model.coef_))
+        norm_series = pd.Series(norm_params, index=['const'] + var_names)
+        original_params = inverseNormalize(norm_params, X_orig, Y_orig, var_names)
+        print(f'\n-->> {name} (Best alpha={model.alpha_:.4f})') 
+        print('规范化系数：')
+        print(norm_series)
+        print('\n原始尺度系数：')
+        print(original_params)
+        
+        # 计算 R-squared
+        y_pred = model.predict(X_norm)
+        r2 = 1 - np.sum((y_norm - y_pred)**2) / np.sum((y_norm - np.mean(y_norm))**2)
+        print(f' {name} R-squared (规范化数据): {r2:.4f}')
+
+    print_sklearn_default_summary(ridge_cv_def, 'sklearn_Default_Ridge', _work_X_clean, _work_Y_clean, model_var_X, _work_X_normalized_def, _work_Y_normalized_def)
+    print_sklearn_default_summary(lasso_cv_def, 'sklearn_Default_Lasso', _work_X_clean, _work_Y_clean, model_var_X, _work_X_normalized_def, _work_Y_normalized_def)
+    print_sklearn_default_summary(enet_cv_def, 'sklearn_Default_ElasticNet', _work_X_clean, _work_Y_clean, model_var_X, _work_X_normalized_def, _work_Y_normalized_def)
+
+    # 定义列表用于后续表格
+    sklearn_default_results = [ridge_cv_def, lasso_cv_def, enet_cv_def]
+    sklearn_default_names = ['sklearn_Default_Ridge', 'sklearn_Default_Lasso', 'sklearn_Default_ElasticNet']
+
+except Exception as e:
+    print(f'sklearn 默认版本 正则化回归失败：{e}')
+
+# RLM 稳健回归
+print('\n' + '='*20 + ' RLM 稳健回归 ' + '='*20 + '\n')
 print('详见 https://www.statsmodels.org/stable/rlm_techn1.html\n')
-
 robust_models = [
     ('HuberT', robust_norms.HuberT(), '适度异常值'),
-    ('TukeyBiweight', robust_norms.TukeyBiweight(), '严重异常值')
+    ('TukeyBiweight', robust_norms.TukeyBiweight(), '严重异常值'),
+    ('AndrewWave', robust_norms.AndrewWave(), '中等异常值'),
+    ('Hampel', robust_norms.Hampel(), '平衡效率和稳健性'),
+    ('RamsayE', robust_norms.RamsayE(), '轻度异常值')
 ]
 
 for name, norm, description in robust_models:
     try:
         rlm_model = sm.RLM(_work_Y, _work_X, missing='drop', M=norm).fit()
-        ALL_Model_List.append([rlm_model, f'稳健{name}'])
+        ALL_Model_List.append([rlm_model, f'RLM稳健{name}'])
         print(f'\n-->> {name} (用途：{description})')
         print(rlm_model.summary())
     except Exception as e:
-        print(f'稳健回归 ({name}) 失败：{e}')
+        print(f'RLM稳健回归 ({name}) 失败：{e}')
+
+# OLS + White标准误（HC0,HC1,HC2,HC3）
+hc_cov_types = [
+    ('HC0', '基本版本，无调整（适合大样本）'),
+    ('HC1', '简单调整（Stata默认，适合中小样本）'),
+    ('HC2', '更准调整（适合小样本异方差）'),
+    ('HC3', '最保守调整（适合小样本和严重异方差）')
+]
+
+for name, description in hc_cov_types:
+    try:
+        ols_hc_results = _work_Model.get_robustcov_results(cov_type=name)
+        ALL_Model_List.append([ols_hc_results, f'OLS+White稳健标准误({name})'])
+        print(f'\n-->> OLS + White稳健标准误({name})， 用途：{description}')
+        print(ols_hc_results.summary())
+    except Exception as e:
+        print(f'OLS + White稳健标准误 ({name}) 失败: {e}')	
+
+# OLS + HAC标准误（Newey-West）,异方差自相关稳健标准误
+try:
+    ols_HAC_results = _work_Model.get_robustcov_results(cov_type='HAC', maxlags=None)    
+    ALL_Model_List.append([ols_HAC_results, 'OLS+HAC稳健标准误 (Newey-West)'])
+    print("\n-->> OLS + HAC稳健标准误 (Newey-West)")
+    print(ols_HAC_results.summary())
+
+except Exception as e:
+    print(f'OLS + HAC稳健标准误(Newey-West) 失败: {e}')
 
 # 加权最小二乘（WLS）回归
 print('\n' + '='*20 + ' 加权最小二乘（WLS）回归 ' + '='*20 + '\n')
 
-# 权重1：残差方差倒数
-resid_var = _work_model_residuals.var()
-weights_var = 1 / resid_var
+# 权重1：OLS残差绝对值的倒数
+weights_abs = 1 / (np.abs(_work_model_residuals) + 1e-10)
 try:
-    wls_model_var = sm.WLS(_work_Y, _work_X, weights=weights_var).fit()
-    ALL_Model_List.append([wls_model_var, 'WLS（基于方差）'])
-    print('\n-->> WLS（基于方差）：残差方差的倒数，稳定样本方差')
-    print(wls_model_var.summary())
+    wls_model_abs = sm.WLS(_work_Y, _work_X, weights=weights_abs).fit()
+    ALL_Model_List.append([wls_model_abs, 'WLS（基于残差绝对值）'])
+    print('\n-->> WLS（基于残差绝对值）：OLS残差绝对值的倒数')
+    print(wls_model_abs.summary())
 except Exception as e:
-    print(f'WLS（基于方差）失败：{e}')
-
+    print(f'WLS（基于残差绝对值）失败：{e}')
+    
 # 权重2：OLS残差平方的倒数
 weights_resid = 1 / (_work_model_residuals ** 2 + 1e-10)
 try:
     wls_model_resid = sm.WLS(_work_Y, _work_X, weights=weights_resid).fit()
-    ALL_Model_List.append([wls_model_resid, 'WLS（基于残差）'])
-    print('\n-->> WLS（基于残差）：OLS残差平方的倒数，针对异方差模式')
+    ALL_Model_List.append([wls_model_resid, 'WLS（基于残差平方）'])
+    print('\n-->> WLS（基于残差平方）：OLS残差平方的倒数')
     print(wls_model_resid.summary())
 except Exception as e:
-    print(f'WLS（基于残差）失败：{e}')
+    print(f'WLS（基于残差平方）失败：{e}')
 
 # 广义最小二乘（GLS）回归
 print('\n' + '='*20 + ' 广义最小二乘（GLS）回归 ' + '='*20 + '\n')
@@ -663,157 +872,294 @@ try:
 except Exception as e:
     print(f'分位数回归失败：{e}')
 
-# 诊断检查：WLS和GLS残差的Breusch-Pagan检验
-print('\n-->> WLS和GLS模型异方差检查\n')
-for model, name in [(wls_model_var, 'WLS基于方差'), (wls_model_resid, 'WLS基于残差'), (gls_model, 'GLS')]:
-    try:
-        bp_pvalue = sm.stats.diagnostic.het_breuschpagan(model.resid, _work_X)[1]
-        print(f'{name} 的Breusch-Pagan p值：{bp_pvalue:.4f}')
-        print(f'结论：p > 0.05 表示异方差得到缓解。')
-    except Exception as e:
-        print(f'{name} 的Breusch-Pagan检验失败：{e}')
-
-# 交叉验证
-print('\n' + '='*20 + ' 交叉验证 ' + '='*20 + '\n')
-print('执行5折交叉验证以评估模型的样本外均方误差（MSE）。\n')
-
-def k_fold_cv_model(model_obj, X, y, k=5, model_type='OLS', norm=None, **kwargs):
-    n = len(y)
-    fold_size = n // k
-    mse_scores = []
-    indices = np.random.permutation(n)
-    X_shuffled = X.iloc[indices]
-    y_shuffled = y.iloc[indices]
-    for i in range(k):
-        test_idx = range(i * fold_size, (i + 1) * fold_size)
-        train_idx = list(set(range(n)) - set(test_idx))
-        X_train = X_shuffled.iloc[train_idx]
-        y_train = y_shuffled.iloc[train_idx]
-        X_test = X_shuffled.iloc[test_idx]
-        y_test = y_shuffled.iloc[test_idx]
-        try:
-            if model_type == 'OLS':
-                model = sm.OLS(y_train, X_train).fit()
-            elif model_type == 'RLM':
-                model = sm.RLM(y_train, X_train, M=norm).fit()
-            elif model_type == 'WLS':
-                model = sm.WLS(y_train, X_train, weights=1.0).fit()  # Simplified weights for CV
-            elif model_type == 'Regularized':
-                model = sm.OLS(y_train, X_train).fit_regularized(alpha=model_obj['alpha'], L1_wt=model_obj['L1_wt'])
-            elif model_type == 'GLS':
-                sigma = np.diag(np.var(y_train) * np.ones(len(y_train)))
-                model = sm.GLS(y_train, X_train, sigma=sigma).fit()
-            elif model_type == 'QuantReg':
-                model = sm.QuantReg(y_train, X_train).fit(q=0.5)
-                
-            y_pred = model.predict(X_test)
-            mse = np.mean((y_test - y_pred) ** 2)
-            mse_scores.append(mse)
-        except:
-            mse_scores.append(np.inf)
-    return np.mean(mse_scores)
-
-cv_results = []
-for model, name in ALL_Model_List:
-    try:
-        if '稳健' in name:
-            norm_name = name.split('\n')[1]
-            norm = robust_norms.HuberT() if norm_name == 'HuberT' else robust_norms.TukeyBiweight()
-            mse = k_fold_cv_model(model, _work_X, _work_Y, model_type='RLM', norm=norm)
-        elif 'WLS' in name:
-            mse = k_fold_cv_model(model, _work_X, _work_Y, model_type='WLS')
-        elif name in ['Ridge', 'Lasso', 'ElasticNet']:
-            L1_wt = 0 if name == 'Ridge' else 1 if name == 'Lasso' else 0.5
-            alpha = ridge_alpha if name == 'Ridge' else lasso_alpha if name == 'Lasso' else enet_alpha
-            mse = k_fold_cv_model({'alpha': alpha, 'L1_wt': L1_wt}, _work_X_normalized, _work_Y_normalized, model_type='Regularized')
-        elif name == 'GLS':
-            mse = k_fold_cv_model(model, _work_X, _work_Y, model_type='GLS')
-        elif '分位数' in name:
-            mse = k_fold_cv_model(model, _work_X, _work_Y, model_type='QuantReg')
-        else:
-            mse = k_fold_cv_model(model, _work_X, _work_Y, model_type='OLS')
-        cv_results.append({'模型': name, '交叉验证MSE': mse})
-        print(f'{name} 的交叉验证MSE：{mse:.4f}')
-    except Exception as e:
-        print(f'{name} 的交叉验证失败：{e}')
-        cv_results.append({'模型': name, '交叉验证MSE': None})
-
-cv_df = pd.DataFrame(cv_results)
-#output_DF_XLS_List.append([cv_df, '交叉验证'])
-
 # 模型比较
 print('\n' + '='*20 + ' 模型比较 ' + '='*20 + '\n')
+
+def get_LogLikelihood(x):
+    try:
+        return f"{x.llf:.4f}"
+    except:
+        return 'N/A'
+
 reg_info_dict = {
-    '样本数': lambda x: f"{int(x.nobs):d}",
+    '样本数': lambda x: f"{int(x.nobs):d}" if hasattr(x, 'nobs') else 'N/A',
+    'DF Model': lambda x: f"{int(x.df_model):d}" if hasattr(x, 'df_model') else 'N/A',
+    '伪R²': lambda x: f"{x.prsquared:.4f}" if hasattr(x, 'prsquared') else 'N/A',
+    'Log-Likelihood': get_LogLikelihood,
     'AIC': lambda x: f"{x.aic:.4f}" if hasattr(x, 'aic') else 'N/A',
     'BIC': lambda x: f"{x.bic:.4f}" if hasattr(x, 'bic') else 'N/A',
     'F统计量': lambda x: f"{x.fvalue:.4f}" if hasattr(x, 'fvalue') else 'N/A',
     'F检验p值': lambda x: f"{x.f_pvalue:.4f}" if hasattr(x, 'f_pvalue') else 'N/A',
-    '伪R²': lambda x: f"{x.prsquared:.4f}" if hasattr(x, 'prsquared') else 'N/A'
+    '均方误差（MSE）': lambda x: f"{x.mse_resid:.4f}" if hasattr(x, 'mse_resid') else 'N/A', 
+    '均方根误差（RMSE）': lambda x: f"{np.sqrt(x.mse_resid):.4f}" if hasattr(x, 'mse_resid') else 'N/A', 
+    '非零系数个数': lambda x: f"{np.sum(np.abs(x.params[1:]) > 1e-6):d}" if hasattr(x, 'params') else 'N/A', 
+    '条件数': lambda x: f"{x.condition_number:.4f}" if hasattr(x, 'condition_number') else 'N/A' 
 }
 
-model_results = []
-model_names = []
+# 分离标准模型和正则化模型（基于 model name）
+standard_results = []
+standard_names = []
+regularized_results = []
+regularized_names = []
+sklearn_reg_results = []
+sklearn_reg_names = []
+sklearn_default_results = [] 
+sklearn_default_names = []  
+       
 for model, name in ALL_Model_List:
-    model_results.append(model)
-    model_names.append(name)
+    if name in ['Ridge', 'Lasso', 'ElasticNet']: 
+        regularized_results.append(model)
+        regularized_names.append(name)
+    elif name in ['sklearn_Ridge', 'sklearn_Lasso', 'sklearn_ElasticNet']: 
+        sklearn_reg_results.append(model)
+        sklearn_reg_names.append(name)
+    elif name in ['sklearn_Default_Ridge', 'sklearn_Default_Lasso', 'sklearn_Default_ElasticNet']: 
+        sklearn_default_results.append(model)
+        sklearn_default_names.append(name)
+    else:
+        standard_results.append(model)
+        standard_names.append(name)
 
 all_regressors = set()
-for model, _ in ALL_Model_List:
-    all_regressors.update(model.params.index)
+
+# 获取回归变量名
+for model, name in ALL_Model_List:
+    try:
+        regressors = model.model.exog_names
+        all_regressors.update(regressors)
+        print(f"从模型 '{name}' 获取变量: {regressors}")
+    except Exception as e:
+        if name in ['sklearn_Ridge', 'sklearn_Lasso', 'sklearn_ElasticNet']:
+            if hasattr(model, 'feature_names_in_'):
+                regressors = ['const'] + list(model.feature_names_in_)
+            else:
+                regressors = ['const'] + model_var_X  
+        else:
+            regressors = ['const'] + model_var_X  
+        all_regressors.update(regressors)
+        print(f"从模型 '{name}' 获取回归变量时失败: {e}. 使用 fallback: {regressors}")
+
 all_regressors.discard('const')
 regressor_order = [var for var in model_var_X if var in all_regressors] + sorted([var for var in all_regressors if var not in model_var_X])
 
-result_sumTab = summary_col(
-    results=model_results,
-    float_format='%0.4f',
-    stars=True,
-    model_names=model_names,
-    info_dict=reg_info_dict,
-    regressor_order=regressor_order
-)
-result_sumTab.add_title('回归模型比较')
-print(result_sumTab)
+# 标准模型用 summary_col
+if standard_results:
+    standard_tab = summary_col(
+        results=standard_results,
+        float_format='%0.4f',
+        stars=True,
+        model_names=standard_names,
+        info_dict=reg_info_dict,
+        regressor_order=regressor_order
+    )
+    standard_tab.add_title('标准模型比较')
+    print(standard_tab)
+else:
+    print("无标准模型")
+    
+# statsmodels 正则化模型表格
+if regularized_results:
+    def get_reg_info(model, X_norm, y_norm, var_names):
+        n = len(y_norm)
+        k = len(var_names)
+        y_pred = np.dot(X_norm, model.params)
+        sse = np.sum((y_norm - y_pred) ** 2)
+        sst = np.sum((y_norm - np.mean(y_norm)) ** 2)
+        r_squared = 1 - sse / sst if sst != 0 else np.nan
+        adj_r_squared = 1 - (sse / (n - k - 1)) / (sst / (n - 1)) if n > k + 1 and sst != 0 else np.nan
+        mse = sse / n
+        rmse = np.sqrt(mse)
+        non_zero_coefs = np.sum(np.abs(model.params[1:]) > 1e-6)
+        best_alpha = getattr(model, 'alpha', np.nan)
+        info = {
+            '样本数': f"{n:d}",
+            'DF Model': f"{k:d}",
+            'R-squared': f"{r_squared:.4f}" if not np.isnan(r_squared) else 'N/A',
+            'Adj. R-squared': f"{adj_r_squared:.4f}" if not np.isnan(adj_r_squared) else 'N/A',
+            '伪R²': f"{r_squared:.4f}" if not np.isnan(r_squared) else 'N/A',
+            'MSE': f"{mse:.4f}",
+            'RMSE': f"{rmse:.4f}",
+            'Non-zero Coefs': f"{non_zero_coefs:d}",
+            'Best Alpha': f"{best_alpha:.4f}" if not np.isnan(best_alpha) else 'N/A',
+            'Log-Likelihood': 'N/A',
+            'AIC': 'N/A',
+            'BIC': 'N/A',
+            'F统计量': 'N/A',
+            'F检验p值': 'N/A'
+        }
+        # 只保留有效、非N/A项
+        filtered_info = {key: val for key, val in info.items() if val != 'N/A'}
+        return filtered_info
 
-# 转换比较表为DataFrame
-final_tableDF = result_sumTab.tables[0]
+    # 构建表格（系数使用反归一化后的原始值）
+    filtered_info = get_reg_info(regularized_results[0], _work_X_normalized, _work_Y_normalized, model_var_X)
+    coef_rows = list(regressor_order) + ['const'] 
+    # 避免重复
+    coef_rows = list(set(coef_rows))
+    rows = coef_rows + list(filtered_info.keys())  
+    regularized_df = pd.DataFrame(index=rows)
+
+    for model, name in zip(regularized_results, regularized_names):
+        norm_params = model.params
+        original_params = inverseNormalize(norm_params, _work_X_clean, _work_Y_clean, model_var_X)
+        info = get_reg_info(model, _work_X_normalized, _work_Y_normalized, model_var_X)
+        
+        col = pd.Series(index=rows, dtype=object)
+        for var in coef_rows:
+            coef = original_params.get(var, np.nan)
+            coef_str = f"{coef:.4f}" if not np.isnan(coef) else 'N/A'
+            if abs(coef) > 0:
+                coef_str += '*'
+            col[var] = coef_str
+        for key, val in info.items():
+            col[key] = val
+        regularized_df[name] = col
+
+    print("\n=====================================")
+    print("statsmodels 正则化模型比较 (系数为反归一化后的原始尺度值)")
+    print("=====================================")
+    print(regularized_df)
+    print("\n注：* 表示非零系数 (无统计显著性)")
+else:
+    print("无 statsmodels 正则化模型")
+
+# sklearn 正则化模型表格
+if sklearn_reg_results:
+    def get_sk_reg_info(model, X_norm, y_norm, var_names):
+        n = len(y_norm)
+        k = len(var_names)
+        y_pred = model.predict(X_norm)
+        sse = np.sum((y_norm - y_pred) ** 2)
+        sst = np.sum((y_norm - np.mean(y_norm)) ** 2)
+        r_squared = 1 - sse / sst if sst != 0 else np.nan
+        adj_r_squared = 1 - (sse / (n - k - 1)) / (sst / (n - 1)) if n > k + 1 and sst != 0 else np.nan
+        mse = sse / n
+        rmse = np.sqrt(mse)
+        non_zero_coefs = np.sum(np.abs(model.coef_) > 1e-6)
+        best_alpha = model.alpha
+        info = {
+            '样本数': f"{n:d}",
+            'DF Model': f"{k:d}",
+            'R-squared': f"{r_squared:.4f}" if not np.isnan(r_squared) else 'N/A',
+            'Adj. R-squared': f"{adj_r_squared:.4f}" if not np.isnan(adj_r_squared) else 'N/A',
+            '伪R²': f"{r_squared:.4f}" if not np.isnan(r_squared) else 'N/A',
+            'MSE': f"{mse:.4f}",
+            'RMSE': f"{rmse:.4f}",
+            'Non-zero Coefs': f"{non_zero_coefs:d}",
+            'Best Alpha': f"{best_alpha:.4f}",
+            'Log-Likelihood': 'N/A',
+            'AIC': 'N/A',
+            'BIC': 'N/A',
+            'F统计量': 'N/A',
+            'F检验p值': 'N/A'
+        }
+        # 只保留有效、非N/A项
+        filtered_info = {key: val for key, val in info.items() if val != 'N/A'}
+        return filtered_info
+
+    # 构建表格（系数使用反归一化后的原始值）
+    filtered_info = get_sk_reg_info(sklearn_reg_results[0], _work_X_normalized_sk, _work_Y_normalized_sk, model_var_X)
+    coef_rows = list(regressor_order) + ['const']  
+    # 避免重复（
+    coef_rows = list(set(coef_rows))
+    rows = coef_rows + list(filtered_info.keys()) 
+    sklearn_reg_df = pd.DataFrame(index=rows)
+
+    for model, name in zip(sklearn_reg_results, sklearn_reg_names):
+        norm_params = np.hstack(([model.intercept_], model.coef_))
+        original_params = inverseNormalize(norm_params, _work_X_clean, _work_Y_clean, model_var_X)
+        info = get_sk_reg_info(model, _work_X_normalized_sk, _work_Y_normalized_sk, model_var_X)
+        
+        col = pd.Series(index=rows, dtype=object)
+        for var in coef_rows:
+            coef = original_params.get(var, np.nan)
+            coef_str = f"{coef:.4f}" if not np.isnan(coef) else 'N/A'
+            if abs(coef) > 0:
+                coef_str += '*'
+            col[var] = coef_str
+        for key, val in info.items():
+            col[key] = val
+        sklearn_reg_df[name] = col
+
+    print("\n=====================================")
+    print("sklearn 正则化模型比较 (系数为反归一化后的原始尺度值)")
+    print("=====================================")
+    print(sklearn_reg_df)
+    print("\n注：* 表示非零系数 (无统计显著性)")
+else:
+    print("无 sklearn 正则化模型")
+
+# sklearn 默认模型表格
+if sklearn_default_results:
+    def get_sk_default_info(model, X_norm, y_norm, var_names):
+        n = len(y_norm)
+        k = len(var_names)
+        y_pred = model.predict(X_norm)
+        sse = np.sum((y_norm - y_pred) ** 2)
+        sst = np.sum((y_norm - np.mean(y_norm)) ** 2)
+        r_squared = 1 - sse / sst if sst != 0 else np.nan
+        adj_r_squared = 1 - (sse / (n - k - 1)) / (sst / (n - 1)) if n > k + 1 and sst != 0 else np.nan
+        mse = sse / n
+        rmse = np.sqrt(mse)
+        non_zero_coefs = np.sum(np.abs(model.coef_) > 1e-6)
+        best_alpha = model.alpha_
+        info = {
+            '样本数': f"{n:d}",
+            'DF Model': f"{k:d}",
+            'R-squared': f"{r_squared:.4f}" if not np.isnan(r_squared) else 'N/A',
+            'Adj. R-squared': f"{adj_r_squared:.4f}" if not np.isnan(adj_r_squared) else 'N/A',
+            '伪R²': f"{r_squared:.4f}" if not np.isnan(r_squared) else 'N/A',
+            'MSE': f"{mse:.4f}",
+            'RMSE': f"{rmse:.4f}",
+            'Non-zero Coefs': f"{non_zero_coefs:d}",
+            'Best Alpha': f"{best_alpha:.4f}",
+            'Log-Likelihood': 'N/A',
+            'AIC': 'N/A',
+            'BIC': 'N/A',
+            'F统计量': 'N/A',
+            'F检验p值': 'N/A'
+        }
+        # 只保留有效、非N/A项
+        filtered_info = {key: val for key, val in info.items() if val != 'N/A'}
+        return filtered_info
+
+    # 构建表格
+    filtered_info = get_sk_default_info(sklearn_default_results[0], _work_X_normalized_def, _work_Y_normalized_def, model_var_X)
+    coef_rows = list(regressor_order) + ['const']
+    coef_rows = list(set(coef_rows)) 
+    rows = coef_rows + list(filtered_info.keys())  
+    sklearn_default_df = pd.DataFrame(index=rows)
+
+    for model, name in zip(sklearn_default_results, sklearn_default_names):
+        norm_params = np.hstack(([model.intercept_], model.coef_))
+        original_params = inverseNormalize(norm_params, _work_X_clean, _work_Y_clean, model_var_X)
+        info = get_sk_default_info(model, _work_X_normalized_def, _work_Y_normalized_def, model_var_X)
+        
+        col = pd.Series(index=rows, dtype=object)
+        for var in coef_rows:
+            coef = original_params.get(var, np.nan)
+            coef_str = f"{coef:.4f}" if not np.isnan(coef) else 'N/A'
+            if abs(coef) > 0:
+                coef_str += '*'
+            col[var] = coef_str
+        for key, val in info.items():
+            col[key] = val
+        sklearn_default_df[name] = col
+
+    print("\n=====================================")
+    print("sklearn默认模型比较 (系数为反归一化后的原始尺度值)")
+    print("=====================================")
+    print(sklearn_default_df)
+    print("\n注：* 表示非零系数 (无统计显著性)")
+else:
+    print("无 sklearn 默认模型")
+    
+# 转换比较表为 DataFrame
+final_tableDF = standard_tab.tables[0]
 output_DF_XLS_List.append([final_tableDF, '模型比较'])
-
-# 自动模型选择
-print('\n' + '='*20 + ' 模型选择 ' + '='*20 + '\n')
-print('根据AIC、BIC和交叉验证MSE的综合得分选择最佳模型\n')
-
-model_scores = []
-for model, name in ALL_Model_List:
-    try:
-        aic = model.aic if hasattr(model, 'aic') else np.inf
-        bic = model.bic if hasattr(model, 'bic') else np.inf
-        mse = next((item['交叉验证MSE'] for item in cv_results if item['模型'] == name), np.inf)
-        if np.isinf(aic) or np.isinf(bic) or np.isinf(mse):
-            score = np.inf
-        else:
-            # 标准化指标
-            aic_norm = (aic - min([m.aic for m, _ in ALL_Model_List if hasattr(m, 'aic')])) / \
-                       (max([m.aic for m, _ in ALL_Model_List if hasattr(m, 'aic')]) - min([m.aic for m, _ in ALL_Model_List if hasattr(m, 'aic')]) + 1e-10)
-            bic_norm = (bic - min([m.bic for m, _ in ALL_Model_List if hasattr(m, 'bic')])) / \
-                       (max([m.bic for m, _ in ALL_Model_List if hasattr(m, 'bic')]) - min([m.bic for m, _ in ALL_Model_List if hasattr(m, 'bic')]) + 1e-10)
-            mse_norm = (mse - min([r['交叉验证MSE'] for r in cv_results if r['交叉验证MSE'] is not None])) / \
-                       (max([r['交叉验证MSE'] for r in cv_results if r['交叉验证MSE'] is not None]) - min([r['交叉验证MSE'] for r in cv_results if r['交叉验证MSE'] is not None]) + 1e-10)
-            score = (aic_norm + bic_norm + mse_norm) / 3
-        model_scores.append({'模型': name, 'AIC': aic, 'BIC': bic, '交叉验证MSE': mse, '综合得分': score})
-    except Exception as e:
-        print(f'{name} 的模型选择评分失败：{e}')
-        model_scores.append({'模型': name, 'AIC': np.inf, 'BIC': np.inf, '交叉验证MSE': np.inf, '综合得分': np.inf})
-
-model_scores_df = pd.DataFrame(model_scores)
-model_scores_df = model_scores_df.sort_values('综合得分')
-print('\n模型评分（越低越好）：\n')
-print(model_scores_df)
-best_model = model_scores_df.iloc[0]['模型'] if not np.isinf(model_scores_df.iloc[0]['综合得分']) else '无'
-print(f'\n推荐模型：{best_model}')
-bestModelRcmdStr = f'\n推荐模型：{best_model}'
-
-output_DF_XLS_List.append([model_scores_df, '模型选择'])
+output_DF_XLS_List.append([regularized_df, 'statsmodels 正则化模型比较'])
+output_DF_XLS_List.append([sklearn_reg_df, 'sklearn 正则化模型比较'])
+output_DF_XLS_List.append([sklearn_default_df, 'sklearn 默认正则化模型比较'])
 
 # 写入Excel
 print('\n-->> 正在写入Excel...\n')
@@ -826,15 +1172,9 @@ for _df_item in range(len(output_DF_XLS_List)):
 
 # 回归结果添加注释
 bottom_row = my_XLS_writer.sheets['模型比较'].max_row
-bottom_row2 = my_XLS_writer.sheets['模型选择'].max_row
-
 note_bottom_rowDF_line1 = pd.DataFrame({'注：* p<0.1, ** p<0.05, *** p<0.01, 括号内为标准误。'})
-note_bottom_rowDF_line2 = pd.DataFrame({bestModelRcmdStr})
-
 note_bottom_rowDF_line1.to_excel(my_XLS_writer, sheet_name = '模型比较', startrow = bottom_row, index = False, header= False)
-note_bottom_rowDF_line2.to_excel(my_XLS_writer, sheet_name = '模型选择', startrow = bottom_row2+1, index = False, header= False)
 
 my_XLS_writer.close()
 
 print('-->> Excel输出完成')
-
