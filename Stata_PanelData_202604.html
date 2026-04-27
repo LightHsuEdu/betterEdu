@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Stata 面板数据分析</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      margin: 20px;
+    }
+    h1, h2, h3 {
+      color: #333;
+    }
+    code {
+	  display: block;
+      background-color: #f4f4f4;
+      padding: 2px 4px;
+      border-radius: 4px;
+      font-family: Consolas, monospace;
+	  font-size: 12px;
+      white-space: pre-wrap;
+    }
+    pre {
+      background-color: #f4f4f4;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 0;
+    }
+    .code-block {
+      margin-top: 20px;
+      margin-bottom: 30px;
+    }
+    .copy-btn {
+      background-color: #f4f4f4;
+      color: #333;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      margin-bottom: 5px;
+    }
+    .copy-btn:hover {
+      background-color: #e0e0e0;
+    }
+    a {
+      color: #0066cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <h1>Stata 面板数据分析</h1>  
+  <h3>1. 安装外部命令</h3>
+  <pre><code>ssc install ivreg2, replace
+ssc install xtoverid, replace
+ssc install xttest1, replace
+ssc install xttest2, replace
+ssc install xttest3, replace
+ssc install xtcsd, replace
+ssc install xtserial, replace
+ssc install xtscc, replace
+ssc install ftools, replace
+ssc install reghdfe, replace
+ssc install outreg2, replace
+ssc install estout, replace
+ssc install winsor2, replace
+ssc install coefplot, replace</code></pre> 
+  <h3>2. 启动 Stata，打开数据文件</h3>		  
+  <h3>3. 创建面板结构</h3>		  
+  <div class="code-block">
+  <h4>&emsp;3.1 检查变量类型（需要修改：个体变量为 id ，时间变量为 year ，数值型）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>describe id year</code></pre>
+  </div> 
+  <div class="code-block">
+  <h4>&emsp;3.2 创建面板结构</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtset id year</code></pre>
+  </div>  
+  <h3>4. 数据处理</h3>
+<div class="code-block">
+  <h4>&emsp;4.1 定义 被解释变量与解释变量（需要修改：YOUR_DEP_VAR ，YOUR_INDEP_VARS）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>local YYO YOUR_DEP_VAR
+local XXO YOUR_INDEP_VARS
+local YY `YYO'
+local XX `XXO'
+local XX_comma : subinstr local XX " " ", ", all</code></pre>
+  </div>  
+  <div class="code-block">
+  <h4>&emsp;4.2 检查缺失值</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>misstable summarize `YY' `XX'</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;可选： 删除缺失值</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>drop if missing(`YY', `XX_comma')</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;可选： 处理异常值（两种方法选择其一）</h4>
+  <h5>&emsp;&emsp;&emsp;&emsp;1. 缩尾处理：进行 1% 和 99% 双侧缩尾</h5>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>winsor2 `YY' `XX', cuts(1 99) replace</code></pre>
+  <h5>&emsp;&emsp;&emsp;&emsp;2. 截尾处理：删除小于1%分位数和大于99%分位数的样本</h5>
+	<button class="copy-btn">复制代码</button>
+    <pre><code>winsor2 `YY' `XX', cuts(1 99) trim replace</br>drop if missing(`YY', `XX_comma')</code></pre>
+  </div>  
+  <h3>5. 描述性统计</h3>		  
+  <div class="code-block">
+  <h4>&emsp;5.1 整体描述</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>sum `YY' `XX'</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;5.2 组内/组间描述</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtsum `YY' `XX'</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;5.3 相关系数矩阵</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>pwcorr `YY' `XX', sig</code></pre>
+  </div>	
+  
+  <h4>&emsp;可选： 时间趋势图（需要修改：YOUR_VAR）</h4>	
+  <div class="code-block">
+    <button class="copy-btn">复制代码</button>
+    <pre><code>preserve
+    collapse (mean) mean_y=YOUR_VAR (semean) se_y=YOUR_VAR, by(year)
+    gen upper = mean_y + 1.96*se_y
+    gen lower = mean_y - 1.96*se_y
+    twoway (rarea upper lower year, color(gray%30)) (line mean_y year, lcolor(blue) lwidth(medium)), title("YOUR_VAR 年度平均趋势") xtitle("年份") ytitle("平均 YOUR_VAR") legend(order(2 "平均值" 1 "95% CI")) scheme(s1mono) name(timeVarPlot, replace)
+restore</code></pre>
+  </div>
+  <h4>&emsp;可选： 变量关系图（散点 + 拟合线）</h4>	
+  <div class="code-block">
+    <button class="copy-btn">复制代码</button>
+    <pre><code>foreach x of local XX {
+    twoway (scatter `YY' `x', mcolor(blue%20) msize(vsmall)) (lfit `YY' `x', lcolor(red)), title("`YY' 与 `x' 的关系") xtitle("`x'") ytitle("`YY'") name(corr_`x', replace)
+}</code></pre>
+  </div>
+  <h3>6. 判别与诊断检验</h3>		  
+  <div class="code-block">
+  <h4>&emsp;6.1 Hausman检验： Prob>chi2 < 0.05 选择固定效应模型 (FE)</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX', fe</br>est store FE_plain</br>xtreg `YY' `XX', re</br>est store RE_plain</br>hausman FE_plain RE_plain, sigmamore</code></pre>
+  </div>
+  <h4>&emsp;6.2 稳健或聚类标准误Hausman检验（Sargan-Hansen 检验）： P-value (Sargan-Hansen stat) < 0.05 选择固定效应模型 (FE)</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX', re vce(cluster id)</br>xtoverid</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;6.3 Breusch-Pagan LM 检验： Prob>chibar2 < 0.05 随机效应模型（RE）优于Pooled</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX', re</br>xttest0</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;6.4 F检验(固定效应)： Prob>F < 0.05 固定效应模型（FE）优于Pooled</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX', fe</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;6.5 异方差检验(修正的 Wald 检验，要求 N < T)： Prob>chi2 < 0.05 存在异方差</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX', fe</br>xttest3</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;6.6 截面相关检验(Pesaran CD 检验)： Pr<0.05 存在截面相关</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX', fe</br>xtcsd, pesaran abs</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;6.7 截面相关检验(Breusch-Pagan LM 检验，仅适用于 N < T)： Prob>chi2 < 0.05  存在截面相关</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX', fe</br>xttest2</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;6.8 序列相关检验(Wooldridge 检验)： Prob>F < 0.05 存在序列相关</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtserial `YY' `XX'</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;6.9 序列相关检验(Baltagi-Li 联合检验)： Serial Correlation Pr>chi2(1) < 0.05 存在序列相关，Joint Test Pr>chi2(2) < 0.05 存在个体效应和/或序列相关</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX', re</br>xttest1</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;6.10  面板单位根检验(Fisher-ADF 检验)： Prob < 0.05 至少部分截面平稳；Prob > 0.05 存在单位根（非平稳）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>foreach v in `YY' `XX' {
+    quietly xtunitroot fisher `v', dfuller lags(1)
+    local p_P  = r(p_P)
+    local p_Pm = r(p_Pm)
+    local p_Z  = r(p_Z)
+    if `p_P' > 0.05 {
+        display as error "警告: 变量 `v' 可能存在单位根" " | 逆卡方P统计量 p=" %5.3f `p_P' " | 修正逆卡方Pm统计量 p=" %5.3f `p_Pm' " | 逆正态Z统计量 p=" %5.3f `p_Z'
+    }
+    else {
+        display as result "通过: 变量 `v' 平稳" " | 逆卡方P统计量 p=" %5.3f `p_P' " | 修正逆卡方Pm统计量 p=" %5.3f `p_Pm' " | 逆正态Z统计量 p=" %5.3f `p_Z'
+    }
+}</code></pre>
+  <h5>&emsp;🠊 提示：若多个变量不平稳，建议执行下方 [可选] 步骤或进行协整检验。</h5>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;6.11  面板协整检验(Kao 协整检验)： P < 0.05 存在协整关系</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtcointtest kao `YY' `XX'</code></pre>
+  <h5>&emsp;🠊 提示：仅当所有 YY 和 XX 均不平稳时，才需检验是否存在协整关系；若 P < 0.05，即便变量不平稳，也可直接使用水平值（或对数）建模，无需差分。</h5>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;可选： 面板数据可能存在非平稳性，直接回归可能导致伪回归（四种方法选择其一）</h4>
+  <h5>&emsp;&emsp;&emsp;&emsp;1. 变量平稳，或不平稳但有协整关系（无需操作）</h5>
+  <h5>&emsp;&emsp;&emsp;&emsp;2. 变量不平稳（对数化处理，尺度变换并减弱异方差，反映弹性/长期均衡；对数化后仍然需要复检平稳性/协整）</h5>
+	<button class="copy-btn">复制代码</button>
+    <pre><code>local YY `YYO'
+local XX `XXO'
+foreach v in `YY' `XX' {
+    capture confirm variable ln_`v'
+    if _rc {
+        quietly gen double ln_`v' = .
+    }
+    quietly replace ln_`v' = ln(`v') if `v' > 0
+    quietly replace ln_`v' = . if `v' <= 0 | missing(`v')
+    quietly count if `v' <= 0 & !missing(`v')
+    if r(N) > 0 {
+        noisily di as error "变量 `v' 含有 `r(N)' 个非正值：ln_`v' 已自动设为缺失。"
+    }
+}
+local YY ln_`YY'
+local new_XX ""
+foreach v in `XX' {
+    local new_XX `new_XX' ln_`v'
+}
+local XX `new_XX'
+local XX_comma : subinstr local XX " " ", ", all
+drop if missing(`YY', `XX_comma')
+display "对数化处理后，当前的被解释变量为: `YY'"
+display "对数化处理后，当前的解释变量列表为: `XX'"</code></pre>
+  <h5>&emsp;&emsp;&emsp;&emsp;3. 变量不平稳且无协整关系（必须使用一阶差分以消除伪回归风险，反映短期波动）</h5>
+	<button class="copy-btn">复制代码</button>
+    <pre><code>local YY `YYO'
+local XX `XXO'
+foreach v in `YY' `XX' {
+    capture confirm variable d_`v'
+    if _rc {
+        quietly gen double d_`v' = .
+    }    
+    quietly replace d_`v' = D.`v'
+}
+local YY d_`YY'
+local new_XX ""
+foreach v in `XX' {
+    local new_XX `new_XX' d_`v'
+}
+local XX `new_XX'
+local XX_comma : subinstr local XX " " ", ", all
+drop if missing(`YY', `XX_comma')
+display "差分处理后，当前的被解释变量为: `YY'"
+display "差分处理后，当前的解释变量列表为: `XX'"</code></pre>
+  <h5>&emsp;&emsp;&emsp;&emsp;4. 变量不平稳且无协整关系（进阶：对数一阶差分，反映增长率并确保平稳性）</h5>
+	<button class="copy-btn">复制代码</button>
+    <pre><code>local YY `YYO'
+local XX `XXO'
+foreach v in `YY' `XX' {
+    capture confirm variable ln_`v'
+    if _rc {
+        quietly gen double ln_`v' = .
+    }
+    quietly replace ln_`v' = ln(`v') if `v' > 0
+    quietly replace ln_`v' = . if `v' <= 0 | missing(`v')
+    quietly count if `v' <= 0 & !missing(`v')
+    if r(N) > 0 {
+        noisily di as error "变量 `v' 含有 `r(N)' 个非正值：ln_`v' 已自动设为缺失。"
+    }
+    capture confirm variable d_ln_`v'
+    if _rc {
+        quietly gen double d_ln_`v' = .
+    }
+    quietly replace d_ln_`v' = D.ln_`v'
+}
+local YY d_ln_`YY'
+local new_XX ""
+foreach v in `XX' {
+    local new_XX `new_XX' d_ln_`v'
+}
+local XX `new_XX'
+local XX_comma : subinstr local XX " " ", ", all
+drop if missing(`YY', `XX_comma')
+display "对数差分处理后，当前的被解释变量为: `YY'"
+display "对数差分处理后，当前的解释变量列表为: `XX'"</code></pre>
+  </div>
+  <h4>&emsp;可选： 残差 vs 拟合值图</h4>	
+  <div class="code-block">
+    <button class="copy-btn">复制代码</button>
+    <pre><code>quietly xtreg `YY' `XX', fe
+capture drop e yhat
+predict e, e
+predict yhat, xb
+twoway (scatter e yhat, mcolor(blue%30) msize(vsmall)), yline(0, lcolor(red)) title("残差 vs 拟合值 (异方差检查)") ytitle("残差 (Residuals)") xtitle("拟合值 (Fitted Values)") note("如果散点呈喇叭状发散，说明存在异方差") name(testHetero, replace)</code></pre>
+  </div>
+  <h4>&emsp;可选： 残差滞后散点图</h4>	
+  <div class="code-block">
+    <button class="copy-btn">复制代码</button>
+    <pre><code>quietly xtreg `YY' `XX', fe
+capture drop e e_lag
+predict e, e
+gen e_lag = L.e
+twoway (scatter e e_lag, mcolor(blue%30) msize(vsmall)) (lfit e e_lag, lcolor(red)), title("残差滞后散点图(序列相关检查)") ytitle("当前残差 (e_t)") xtitle("滞后残差 (e_t-1)") note("如果红线明显倾斜，说明存在序列相关") name(testSerial, replace)</code></pre>
+  </div>
+  <h4>&emsp;可选： 年度平均残差图</h4>	
+  <div class="code-block">
+    <button class="copy-btn">复制代码</button>
+    <pre><code>quietly xtreg `YY' `XX', fe
+capture drop e 
+predict e, e
+preserve
+    collapse (mean) mean_e=e, by(year)
+    twoway (line mean_e year, lcolor(blue)), yline(0) title("年度平均残差图(截面相关检查)") ytitle("平均残差") xtitle("年份") note("如果曲线呈现明显波浪状，说明存在截面相关") name(testCrosSec, replace)
+restore</code></pre>
+  </div>
+  </br>  
+  <h3>7. 基本模型</h3>		  
+  <div class="code-block">
+  <h4>&emsp;7.1 Pooled 混合回归（单向聚类）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>reg `YY' `XX', vce(cluster id)</br>est store myOLS_CT0CL1</code></pre>
+  </div>  
+  <div class="code-block">
+  <h4>&emsp;7.2 Pooled 混合回归（时间固定效应+单向聚类）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>reg `YY' `XX' i.year, vce(cluster id)</br>est store myOLS_CTtimeCL1</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;7.3 Fixed Effects Model 固定效应模型（个体固定效应+单向聚类）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX', fe vce(cluster id)</br>est store myFE_CTidCL1</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;7.4 Fixed Effects Model 固定效应模型（双向固定效应+单向聚类）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX' i.year, fe vce(cluster id)</br>est store myFE_CT2CL1</code></pre>
+  </div>  
+  <div class="code-block">
+  <h4>&emsp;7.5 Random Effects Model 随机效应模型（个体随机效应+单向聚类）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX', re vce(cluster id)</br>est store myRE_CRidCL1</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;7.6 Random Effects Model 随机效应模型（个体随机效应+时间固定效应+单向聚类）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtreg `YY' `XX' i.year, re vce(cluster id)</br>est store myRE_CR2CL1</code></pre>
+  </div>
+  </br>
+  <h3>8. 补充模型</h3>		  
+  <div class="code-block">
+  <h4>&emsp;8.1 Driscoll–Kraay稳健标准误（SCC）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtscc `YY' `XX', fe lag(2)</br>est store mySCC</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;8.2 Driscoll–Kraay稳健标准误（SCC）+双向固定效应</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtscc `YY' `XX' i.year, fe lag(2)</br>est store mySCC_CT2</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;8.3 面板校正标准误（PCSE）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtpcse `YY' `XX', corr(psar1) pairwise</br>est store myPCSE</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;8.4 面板校正标准误（PCSE）+双向固定效应</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>xtpcse `YY' `XX' i.id i.year, corr(psar1) pairwise</br>est store myPCSE_CT2</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;8.5 双向固定效应模型（个体+时间双向聚类）</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>reghdfe `YY' `XX', absorb(id year) vce(cluster id year)</br>est store myReghdfe</code></pre>
+  </div>
+  <h4>&emsp;可选： 模型系数对比图</h4>	
+  <div class="code-block">
+    <button class="copy-btn">复制代码</button>
+    <pre><code>coefplot (myFE_CT2CL1, label("FE")) (mySCC, label("SCC")) (myPCSE, label("PCSE")) (myReghdfe, label("双向效应+聚类")), keep(`XX') xline(0, lcolor(red) lpattern(dash)) xtitle("回归系数") legend(pos(6) rows(1) size(small) region(lwidth(none))) title("模型系数对比") scheme(s1mono) name(ModelCoef, replace)</code></pre>
+  </div>
+  <div class="code-block">
+    <button class="copy-btn">复制代码</button>
+    <pre><code>coefplot (myFE_CT2CL1, label("FE") color(gold) msymbol(circle) ciopts(recast(rcap) lcolor(gold%80) lwidth(medthick))) (mySCC, label("SCC") color(red) msymbol(diamond) ciopts(recast(rcap) lcolor(red%80) lwidth(medthick))) (myPCSE, label("PCSE") color(olive) msymbol(square) ciopts(recast(rcap) lcolor(olive%80) lwidth(medthick))) (myReghdfe, label("双向效应+聚类") color(dkorange) msymbol(triangle) ciopts(recast(rcap) lcolor(dkorange%80) lwidth(medthick))), keep(`XX') vertical yline(0, lcolor(gray) lpattern(dash)) ytitle("回归系数") legend(pos(6) rows(1) size(small) region(lwidth(none))) title("模型系数对比") name(vertModelCoef, replace)</code></pre>
+  </div>  
+  <h4>&emsp;可选： 个体效应图（适用 FE 模型，如模型7.3, 7.4）</h4>	
+  <div class="code-block">
+    <button class="copy-btn">复制代码</button>
+    <pre><code>quietly xtreg `YY' `XX', fe
+capture drop u
+predict u, u 
+preserve
+    collapse (mean) mean_u=u, by(id)
+    sort mean_u 
+    gen rank = _n    
+    decode id, gen(id_name)
+    list rank id_name mean_u 
+    twoway (scatter mean_u rank, msize(small) mcolor(grey%30)), yline(0) title("个体效应分布") ytitle("未观测到的个体效应 (u_i)") xtitle("个体排名") legend(off) scheme(s1mono)  note("控制所有变量后的个体异质性，右上的个体具有正向的未观测优势") name(idEff, replace)
+restore</code></pre>
+  </div>
+  <div class="code-block">
+    <button class="copy-btn">复制代码</button>
+    <pre><code>quietly xtreg `YY' `XX', fe vce(cluster id)
+capture drop u
+predict u, u 
+preserve
+    collapse (mean) mean_u=u, by(id)
+    sort mean_u 
+    gen rank = _n 
+    decode id, gen(id_name)    
+    gen label_show = "" 
+    replace label_show = id_name if rank <= 5 | rank >= _N-4    
+    list rank id_name mean_u
+    twoway (scatter mean_u rank, msize(small) mcolor(blue%30)) (scatter mean_u rank if label_show != "", mcolor(red) msize(small) mlabel(label_show) mlabpos(6) mlabsize(vsmall)), yline(0) title("个体效应分布") ytitle("未观测到的个体效应 (u_i)") xtitle("个体排名") legend(off) scheme(s1mono) note("控制所有变量后的个体异质性，右上的个体具有正向的未观测优势") name(idEffLabel, replace)
+restore</code></pre>
+  </div>  
+  <h4>&emsp;可选： 时间效应图（模型包括 i.year，如模型7.4, 7.6）</h4>	
+  <div class="code-block">
+    <button class="copy-btn">复制代码</button>
+    <pre><code>coefplot myFE_CT2CL1, keep(*.year) vertical title("时间固定效应系数") ytitle("对 GDP 的影响 (相对于基期)") xtitle("年份") xlabel(, angle(90) labsize(vsmall)) note("控制个体效应后的时间效应变化趋势") scheme(s1mono) name(timeEff, replace)</code></pre>
+  </div>
+  </br>
+  <h3>9. 输出结果</h3>		  
+  <div class="code-block">
+  <h4>&emsp;9.1 屏幕显示</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>esttab myOLS_CT0CL1 myFE_CTidCL1 myRE_CRidCL1 mySCC myPCSE myReghdfe, se label star(* 0.1 ** 0.05 *** 0.01) b(%20.4f) se(%20.4f) mtitles("混合回归（单向聚类）" "固定效应模型（个体固定效应+单向聚类）" "随机效应模型（个体随机效应+单向聚类）" "Driscoll–Kraay稳健标准误（SCC）" "面板校正标准误（PCSE）" "双向固定效应模型（个体+时间双向聚类）") stats(N r2 r2_a pr2 F p ll aic bic, labels("样本数" "R²" "调整R²" "伪R²" "F值" "p值" "对数似然" "AIC" "BIC")) modelwidth(50)</code></pre>
+  </div>
+  <div class="code-block">
+  <h4>&emsp;9.2 保存文件</h4>
+    <button class="copy-btn">复制代码</button>
+    <pre><code>esttab myOLS_CT0CL1 myFE_CTidCL1 myRE_CRidCL1 mySCC myPCSE myReghdfe using "D:\Output_Reg_Table.doc", replace se label star(* 0.1 ** 0.05 *** 0.01) b(%20.4f) se(%20.4f) mtitles("混合回归（单向聚类）" "固定效应模型（个体固定效应+单向聚类）" "随机效应模型（个体随机效应+单向聚类）" "Driscoll–Kraay稳健标准误（SCC）" "面板校正标准误（PCSE）" "双向固定效应模型（个体+时间双向聚类）") stats(N r2 r2_a pr2 F p ll aic bic, labels("样本数" "R²" "调整R²" "伪R²" "F值" "p值" "对数似然" "AIC" "BIC")) modelwidth(50)</code></pre>
+  </div>
+  </br>
+  <script>
+    function fallbackCopyToClipboard(text) {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.position = "fixed";
+      textArea.style.top = "-9999px";
+      textArea.style.left = "-9999px";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        const success = document.execCommand('copy');
+        return success;
+      } catch (err) {
+        console.error('Fallback 复制失败:', err);
+        return false;
+      } finally {
+        document.body.removeChild(textArea);
+      }
+    }
+    function copyText(text, button) {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => {
+          showCopied(button);
+        }).catch(err => {
+          if (fallbackCopyToClipboard(text)) {
+            showCopied(button);
+          } else {
+            button.innerText = '复制失败';
+          }
+        });
+      } else {
+        if (fallbackCopyToClipboard(text)) {
+          showCopied(button);
+        } else {
+          button.innerText = '复制失败';
+        }
+      }
+    }
+    function showCopied(button) {
+      const originalText = button.innerText;
+      button.innerText = '已复制';
+      setTimeout(() => {
+        button.innerText = originalText;
+      }, 1500);
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('.copy-btn').forEach(button => {
+        button.addEventListener('click', () => {
+          const code = button.nextElementSibling.querySelector('code').innerText;
+          copyText(code, button);
+        });
+      });
+    });
+  </script>
+</body>
+</html>
